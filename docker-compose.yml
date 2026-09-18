@@ -1,0 +1,46 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nimiq_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nimiq_user
+      POSTGRES_PASSWORD: nimiq_pass
+      POSTGRES_DB: nimiq_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - nimiq_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nimiq_user -d nimiq_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: nimiq_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./server/.env
+    environment:
+      DATABASE_URL: postgresql://nimiq_user:nimiq_pass@postgres:5432/nimiq_db?schema=public
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  nimiq_pgdata:
+    driver: local

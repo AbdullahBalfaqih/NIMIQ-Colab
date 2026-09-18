@@ -1,0 +1,467 @@
+// NIMIQ — Prisma Schema
+// All monetary values stored as BigInt cents to avoid floating point errors
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum GroupMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentRequestStatus {
+  PENDING
+  OPENED
+  CONFIRMED
+  PROCESSING
+  PAID
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
+enum PaymentIntentStatus {
+  CREATED
+  AWAITING_USER_CONFIRMATION
+  SUBMITTED
+  VERIFYING
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+  FAILED
+  REJECTED
+}
+
+enum AuditAction {
+  GROUP_CREATED
+  GROUP_UPDATED
+  GROUP_DELETED
+  MEMBER_ADDED
+  MEMBER_REMOVED
+  MEMBER_ROLE_UPDATED
+  GOAL_CREATED
+  GOAL_UPDATED
+  GOAL_COMPLETED
+  CONTRIBUTION_RECORDED
+  PAYMENT_REQUEST_CREATED
+  PAYMENT_REQUEST_CANCELLED
+  PAYMENT_INTENT_CREATED
+  PAYMENT_SUBMITTED
+  PAYMENT_VERIFYING
+  PAYMENT_VERIFIED
+  PAYMENT_REJECTED
+  PAYMENT_FAILED
+  PAYMENT_EXPIRED
+  ANOMALY_DETECTED
+  AI_ACTION_PROPOSED
+  AI_ACTION_CONFIRMED
+  AI_ACTION_REJECTED
+  AI_ACTION_EXPIRED
+  USER_REGISTERED
+  USER_WALLET_VERIFIED
+  SECURITY_ALERT
+}
+
+enum AiPendingActionStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  EXPIRED
+}
+
+enum AiPendingActionType {
+  CREATE_PAYMENT_REQUEST
+  CANCEL_PAYMENT_REQUEST
+  UPDATE_GOAL
+  ADD_MEMBER
+  REMOVE_MEMBER
+  UPDATE_DEADLINE
+}
+
+enum NotificationEventType {
+  PAYMENT_REQUEST_CREATED
+  PAYMENT_RECEIVED
+  PAYMENT_FAILED
+  GOAL_APPROACHING_DEADLINE
+  GOAL_COMPLETED
+  MEMBER_JOINED
+  MEMBER_REMOVED
+  ANOMALY_DETECTED
+  PAYMENT_REQUEST_EXPIRING
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(254)
+  passwordHash String   @db.VarChar(255)
+  displayName  String   @db.VarChar(100)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  wallets              Wallet[]
+  groupMemberships     GroupMember[]
+  createdGroups        Group[]               @relation("GroupOwner")
+  paymentRequestsSent  PaymentRequest[]      @relation("PaymentRequester")
+  paymentRequestsRecv  PaymentRequest[]      @relation("PaymentRecipient")
+  aiConversations      AiConversation[]
+  auditLogs            AuditLog[]            @relation("AuditActor")
+  refreshTokens        RefreshToken[]
+  pendingActions       AiPendingAction[]
+
+  @@index([email])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  tokenHash String   @unique @db.VarChar(255)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+// ─── Wallets ─────────────────────────────────────────────────────────────────
+
+model Wallet {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  address    String   @db.VarChar(100)
+  network    String   @db.VarChar(20)  // "testnet" | "mainnet"
+  verified   Boolean  @default(false)
+  verifiedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([address, network])
+  @@index([userId])
+  @@map("wallets")
+}
+
+// ─── Groups ───────────────────────────────────────────────────────────────────
+
+model Group {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(100)
+  emoji       String   @db.VarChar(10)
+  description String?  @db.VarChar(500)
+  currency    String   @db.VarChar(10)  // "USD", "NIM", "USDT"
+  ownerId     String   @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  owner            User             @relation("GroupOwner", fields: [ownerId], references: [id])
+  members          GroupMember[]
+  goals            Goal[]
+  paymentRequests  PaymentRequest[]
+  aiConversations  AiConversation[]
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String          @id @default(uuid()) @db.Uuid
+  groupId  String          @db.Uuid
+  userId   String          @db.Uuid
+  role     GroupMemberRole @default(MEMBER)
+  joinedAt DateTime        @default(now())
+  leftAt   DateTime?
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  contributions   Contribution[]
+  paymentRequests PaymentRequest[] @relation("MemberPaymentRequests")
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+// ─── Goals ───────────────────────────────────────────────────────────────────
+
+model Goal {
+  id           String     @id @default(uuid()) @db.Uuid
+  groupId      String     @db.Uuid
+  name         String     @db.VarChar(100)
+  description  String?    @db.VarChar(500)
+  // Stored in smallest currency unit (cents for USD, luna for NIM)
+  targetAmount BigInt
+  currency     String     @db.VarChar(10)
+  status       GoalStatus @default(ACTIVE)
+  deadline     DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  group           Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  contributions   Contribution[]
+  paymentRequests PaymentRequest[]
+
+  // Constraint: targetAmount must be positive
+  @@index([groupId])
+  @@index([status])
+  @@map("goals")
+}
+
+// ─── Contributions ───────────────────────────────────────────────────────────
+
+model Contribution {
+  id              String   @id @default(uuid()) @db.Uuid
+  goalId          String   @db.Uuid
+  groupMemberId   String   @db.Uuid
+  transactionId   String?  @db.Uuid
+  // Amount in smallest currency unit
+  amountCents     BigInt
+  confirmedAt     DateTime @default(now())
+  note            String?  @db.VarChar(255)
+
+  goal          Goal         @relation(fields: [goalId], references: [id])
+  groupMember   GroupMember  @relation(fields: [groupMemberId], references: [id])
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([goalId])
+  @@index([groupMemberId])
+  @@map("contributions")
+}
+
+// ─── Payment Requests ────────────────────────────────────────────────────────
+
+model PaymentRequest {
+  id              String               @id @default(uuid()) @db.Uuid
+  groupId         String               @db.Uuid
+  goalId          String?              @db.Uuid
+  requesterId     String               @db.Uuid   // User who created the request
+  recipientId     String               @db.Uuid   // User who should pay
+  groupMemberId   String?              @db.Uuid   // The group member record
+  // Amount in smallest currency unit
+  amountCents     BigInt
+  currency        String               @db.VarChar(10)
+  purpose         String               @db.VarChar(255)
+  note            String?              @db.VarChar(500)
+  status          PaymentRequestStatus @default(PENDING)
+  expiresAt       DateTime
+  idempotencyKey  String               @unique @db.VarChar(255)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  group       Group          @relation(fields: [groupId], references: [id])
+  goal        Goal?          @relation(fields: [goalId], references: [id])
+  requester   User           @relation("PaymentRequester", fields: [requesterId], references: [id])
+  recipient   User           @relation("PaymentRecipient", fields: [recipientId], references: [id])
+  groupMember GroupMember?   @relation("MemberPaymentRequests", fields: [groupMemberId], references: [id])
+  intents     PaymentIntent[]
+
+  @@index([groupId])
+  @@index([recipientId])
+  @@index([requesterId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("payment_requests")
+}
+
+// ─── Payment Intents ─────────────────────────────────────────────────────────
+
+model PaymentIntent {
+  id               String              @id @default(uuid()) @db.Uuid
+  paymentRequestId String              @db.Uuid
+  // Amount in smallest currency unit
+  amountCents      BigInt
+  currency         String              @db.VarChar(10)
+  recipientAddress String              @db.VarChar(100)
+  senderAddress    String?             @db.VarChar(100)
+  status           PaymentIntentStatus @default(CREATED)
+  nimiqTxHash      String?             @db.VarChar(128)
+  idempotencyKey   String              @unique @db.VarChar(255)
+  expiresAt        DateTime
+  completedAt      DateTime?
+  failureReason    String?             @db.VarChar(500)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  paymentRequest PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+  transaction    Transaction?
+
+  @@index([paymentRequestId])
+  @@index([status])
+  @@index([nimiqTxHash])
+  @@map("payment_intents")
+}
+
+// ─── Transactions ─────────────────────────────────────────────────────────────
+
+model Transaction {
+  id              String   @id @default(uuid()) @db.Uuid
+  paymentIntentId String   @unique @db.Uuid  // One-to-one: intent can only confirm once
+  // UNIQUE constraint prevents replay attacks
+  nimiqTxHash     String   @unique @db.VarChar(128)
+  // Amount in smallest currency unit
+  amountCents     BigInt
+  currency        String   @db.VarChar(10)
+  senderAddress   String   @db.VarChar(100)
+  recipientAddress String  @db.VarChar(100)
+  blockHeight     Int?
+  confirmations   Int      @default(0)
+  network         String   @db.VarChar(20)
+  confirmedAt     DateTime @default(now())
+  rawData         Json?    // Store full tx data for audit
+
+  paymentIntent PaymentIntent  @relation(fields: [paymentIntentId], references: [id])
+  contributions Contribution[]
+
+  @@index([nimiqTxHash])
+  @@index([senderAddress])
+  @@index([recipientAddress])
+  @@map("transactions")
+}
+
+// ─── AI ──────────────────────────────────────────────────────────────────────
+
+model AiConversation {
+  id        String   @id @default(uuid()) @db.Uuid
+  groupId   String   @db.Uuid
+  userId    String   @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group          Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages       AiMessage[]
+  pendingActions AiPendingAction[]
+
+  @@index([groupId])
+  @@index([userId])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @db.Uuid
+  role           String   @db.VarChar(20)  // "user" | "assistant" | "tool"
+  content        String   @db.Text
+  toolCalls      Json?    // Structured tool calls/results
+  createdAt      DateTime @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+model AiPendingAction {
+  id             String                @id @default(uuid()) @db.Uuid
+  conversationId String                @db.Uuid
+  userId         String                @db.Uuid
+  type           AiPendingActionType
+  payload        Json                  // Structured action data
+  status         AiPendingActionStatus @default(PENDING)
+  expiresAt      DateTime
+  confirmedAt    DateTime?
+  rejectedAt     DateTime?
+  createdAt      DateTime              @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("ai_pending_actions")
+}
+
+// ─── Audit Logs ──────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String      @id @default(uuid()) @db.Uuid
+  actorId    String?     @db.Uuid
+  action     AuditAction
+  resource   String      @db.VarChar(100)
+  resourceId String?     @db.Uuid
+  result     String      @db.VarChar(20)   // "SUCCESS" | "FAILURE" | "BLOCKED"
+  metadata   Json?
+  requestId  String?     @db.VarChar(100)
+  ipAddress  String?     @db.VarChar(45)
+  userAgent  String?     @db.VarChar(500)
+  groupId    String?     @db.Uuid
+  timestamp  DateTime    @default(now())
+
+  actor User?  @relation("AuditActor", fields: [actorId], references: [id])
+  group Group? @relation(fields: [groupId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([resourceId])
+  @@index([groupId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// ─── Idempotency Keys ────────────────────────────────────────────────────────
+
+model IdempotencyKey {
+  key          String   @id @db.VarChar(255)
+  userId       String   @db.Uuid
+  endpoint     String   @db.VarChar(200)
+  responseCode Int
+  responseBody Json
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String                @id @default(uuid()) @db.Uuid
+  groupId   String?               @db.Uuid
+  userId    String                @db.Uuid
+  eventType NotificationEventType
+  title     String                @db.VarChar(200)
+  body      String                @db.VarChar(500)
+  metadata  Json?
+  read      Boolean               @default(false)
+  readAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  group Group? @relation(fields: [groupId], references: [id])
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([read])
+  @@map("notifications")
+}
