@@ -47,17 +47,56 @@ NColab addresses these challenges by merging Nimiq's browser-native blockchain w
 
 ## Primary Use Cases
 
-### 1. Collaborative Travel and Expeditions
-Groups planning international or local journeys can establish target vaults (e.g., Paris Trip). Members contribute their assigned quotas via Nimiq. The AI Operator monitors target progress, alerts non-payers, and presents immediate funding status.
+<p align="center">
+  <img src="./public/use_cases.jpg" alt="NColab Primary Use Cases Infographic" width="100%" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);" />
+</p>
 
-### 2. Household and Shared Living Operations
-Roommates coordinate recurring utility payments, rent reserves, and groceries. Individual contributions are credited transparently, preventing disputes over historical disbursements.
+```mermaid
+flowchart LR
+    subgraph UC1["1. Travel Expeditions"]
+        direction TB
+        T1["Target Vault: Paris Trip"]
+        T2["Fixed Quota Per Traveler"]
+        T3["AI Progress Audit & Alerts"]
+        T1 --> T2 --> T3
+    end
 
-### 3. Events, Celebrations, and Gatherings
-Organizers create designated budgets for birthdays, weddings, or community gatherings. The protocol ensures that funding quotas are met prior to capital expenditure.
+    subgraph UC2["2. Shared Living"]
+        direction TB
+        H1["Monthly Operating Vault"]
+        H2["Rent, Utilities & Groceries"]
+        H3["Equal Recurring Micro-Splits"]
+        H1 --> H2 --> H3
+    end
 
-### 4. Decentralized Workgroups and Micro-Grants
-Distributed teams allocate and track project bounties, equipment funds, and milestone deliverables with complete audit logs and on-chain verification.
+    subgraph UC3["3. Milestone Celebrations"]
+        direction TB
+        E1["Celebration Goal: Birthday"]
+        E2["Friends Fractional Contributions"]
+        E3["Direct Vendor Payment on Completion"]
+        E1 --> E2 --> E3
+    end
+
+    subgraph UC4["4. Workgroup Bounties"]
+        direction TB
+        W1["Sprint & Project Treasury"]
+        W2["Milestone Deliverables Verified"]
+        W3["Autonomous Micro-Grant Payout"]
+        W1 --> W2 --> W3
+    end
+
+    UC1 ==> Core["NColab AI Operator & Nimiq On-Chain Settlement"]
+    UC2 ==> Core
+    UC3 ==> Core
+    UC4 ==> Core
+```
+
+| Use Case | Target Type | Contribution Flow | AI Operator Function | On-Chain Settlement |
+|---|---|---|---|---|
+| **Travel Expeditions** | Fixed Pool Goal | Multi-party fixed quotas | Auto-alerts non-contributors & projects deadlines | Instant flight/stay vault lock |
+| **Shared Living** | Recurring Cycles | Monthly dynamic split | Calculates consumption & historical credits | Automated landlord / utility push |
+| **Milestone Events** | Target Threshold | Voluntary micro-shares | Validates 100% funding completion | Direct merchant contactless QR tap |
+| **Workgroup Bounties** | Milestone Escrow | Task-based allocation | Validates submission proofs & audit logs | Sub-second micro-grant release |
 
 ---
 
